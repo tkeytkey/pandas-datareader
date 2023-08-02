@@ -4,11 +4,12 @@ import json
 import re
 import time
 
-from pandas import DataFrame, isnull, notnull, to_datetime
+from pandas import DataFrame, isnull, notnull, to_datetime, read_csv
 
 from pandas_datareader._utils import RemoteDataError
 from pandas_datareader.base import _DailyBaseReader
 from pandas_datareader.yahoo.headers import DEFAULT_HEADERS
+# Quick n Dirty fix
 
 
 class YahooDailyReader(_DailyBaseReader):
@@ -115,7 +116,9 @@ class YahooDailyReader(_DailyBaseReader):
 
     @property
     def url(self):
-        return "https://finance.yahoo.com/quote/{}/history"
+        #return "https://finance.yahoo.com/quote/{}/history"
+        return "https://query1.finance.yahoo.com/v7/finance/download/{}"
+    #?period1=1658644697&period2=1690180697&interval=1d&events=history&includeAdjustedClose=true
 
     # Test test_get_data_interval() crashed because of this issue, probably
     # whole yahoo part of package wasn't
@@ -145,25 +148,43 @@ class YahooDailyReader(_DailyBaseReader):
         symbol = params["symbol"]
         del params["symbol"]
         url = url.format(symbol)
+##        print('url:',url)
+##        print('params:',params)
+##        print('classname:',self.__class__.__name__)
+        
 
         resp = self._get_response(url, params=params, headers=self.headers)
+#        print('resp.text:',resp.text)
         ptrn = r"root\.App\.main = (.*?);\n}\(this\)\);"
-        try:
-            j = json.loads(re.search(ptrn, resp.text, re.DOTALL).group(1))
-            data = j["context"]["dispatcher"]["stores"]["HistoricalPriceStore"]
-        except KeyError:
-            msg = "No data fetched for symbol {} using {}"
-            raise RemoteDataError(msg.format(symbol, self.__class__.__name__))
+        url +=  f"?period1={params['period1']}&period2={params['period2']}&interval=1d&events=history&includeAdjustedClose=true"
+        prices = DataFrame(data=read_csv(url))
+#        print('response:',prices)
+        bypass = False
+        if bypass:
+                           
+            try:
+    #            print('json:',(re.search(ptrn, resp.text, re.DOTALL).group(1)))
+                j = json.loads(re.search(ptrn, resp.text, re.DOTALL).group(1))
+#                print('keys:',(j["context"]["dispatcher"]["stores"])[:1000])
+                data = j["context"]["dispatcher"]["stores"]["HistoricalPriceStore"]
+            except KeyError:
+                msg = "No data fetched for symbol {} using {}"
+                raise RemoteDataError(msg.format(symbol, self.__class__.__name__))
 
-        # price data
-        prices = DataFrame(data["prices"])
+            # price data
+            prices = DataFrame(data["prices"])
         prices.columns = [col.capitalize() for col in prices.columns]
-        prices["Date"] = to_datetime(to_datetime(prices["Date"], unit="s").dt.date)
+        prices["Date"] = to_datetime(to_datetime(prices["Date"], format='%Y-%m-%d').dt.date)
+#        prices["Date"] = to_datetime(to_datetime(prices["Date"], unit="s").dt.date)
+        #, format='%m%d%Y %H:%M:%S'
 
         if "Data" in prices.columns:
             prices = prices[prices["Data"].isnull()]
-        prices = prices[["Date", "High", "Low", "Open", "Close", "Volume", "Adjclose"]]
-        prices = prices.rename(columns={"Adjclose": "Adj Close"})
+        print('prices.columns:',prices.columns)
+        prices = prices[["Date", "High", "Low", "Open", "Close", "Adj close", "Volume"]]
+#        prices = prices[["Date", "High", "Low", "Open", "Close", "Volume", "Adjclose"]]
+        prices = prices.rename(columns={"Adj close": "Adj Close"})
+#        prices = prices.rename(columns={"Adjclose": "Adj Close"})
 
         prices = prices.set_index("Date")
         prices = prices.sort_index().dropna(how="all")
